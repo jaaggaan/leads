@@ -1,0 +1,2146 @@
+{
+  "name": "Magnus Copo - Lead Generation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "0892e684-b2a8-4ab1-9953-539423d6077a",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1hHjRbLNzJ4ZLoR1",
+          "cachedResultName": "MC_Config"
+        },
+        "returnAll": true
+      },
+      "id": "c8985536-3705-4038-a8f0-2e40a8a64c4b",
+      "name": "Read Engine Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        800
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "tglDlqaaEhKIp5N7",
+          "cachedResultName": "MC_Execution_Log"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "execution_date",
+              "condition": "gte",
+              "keyValue": "={{ $today.toISO() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "d03f74f3-845c-41ee-9b32-30662a75305d",
+      "name": "Read Today's Spend",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        512,
+        800
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $('Read Engine Config').all().map(i => i.json).filter(r => r && r.config_key);\nconst cfg = {};\nlet lockRow = null;\nfor (const r of rows) { cfg[r.config_key] = r.config_value; if (r.config_key === 'engine_lock') lockRow = r; }\nconst num = (k, d) => { const v = parseFloat(cfg[k]); return isNaN(v) ? d : v; };\nconst settings = {\n  max_records: Math.min(20, Math.max(1, Math.round(num('max_records_per_run', 5)))),\n  budget: num('daily_api_budget_usd', 3),\n  max_retries: Math.max(1, Math.round(num('max_retries', 3))),\n  retry_base: num('retry_base_minutes', 10),\n  lock_timeout: num('lock_timeout_minutes', 20),\n  cost_search: num('cost_search_usd', 0.005),\n  cost_scrape: num('cost_scrape_usd', 0.002),\n  cost_ai: num('cost_ai_usd', 0.003),\n  enabled: String(cfg.engine_enabled == null ? 'true' : cfg.engine_enabled).toLowerCase() !== 'false'\n};\nconst logs = $input.all().map(i => i.json).filter(r => r && r.execution_id);\nconst spend = logs.reduce((a, r) => a + (Number(r.api_cost) || 0), 0);\nconst now = Date.now();\nlet proceed = true;\nlet reason = 'OK';\nif (!lockRow) { proceed = false; reason = 'engine_lock row missing in MC_Config'; }\nelse if (!settings.enabled) { proceed = false; reason = 'Engine disabled (engine_enabled=false)'; }\nelse if (spend >= settings.budget) { proceed = false; reason = 'Daily API budget reached: $' + spend.toFixed(3); }\nelse if (lockRow.config_value) {\n  const lockedAt = lockRow.locked_at ? new Date(lockRow.locked_at).getTime() : 0;\n  if (now - lockedAt < settings.lock_timeout * 60000) { proceed = false; reason = 'Run ' + lockRow.config_value + ' still holds the lock'; }\n}\nreturn [{ json: { proceed, reason, settings, spend_today: Number(spend.toFixed(4)), execution_id: String($execution.id), started_at: new Date().toISOString() } }];"
+      },
+      "id": "0d9dcebc-0d50-4650-bfb2-9e278512b152",
+      "name": "Check Lock & Budget",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.proceed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "65c0625f-debf-42d3-ba10-8755a0f93523",
+      "name": "Can Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1hHjRbLNzJ4ZLoR1",
+          "cachedResultName": "MC_Config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "config_key",
+              "keyValue": "engine_lock"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "config_value": "={{ $json.execution_id }}",
+            "locked_at": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "209ea24d-b71e-41e9-8913-f3b5cc7c0702",
+      "name": "Acquire Lock",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1184,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "dHo10PiVJBO0G7JA",
+          "cachedResultName": "MC_Searches"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "keyValue": "PENDING"
+            },
+            {
+              "keyName": "status",
+              "keyValue": "RETRY"
+            },
+            {
+              "keyName": "status",
+              "keyValue": "RUNNING"
+            }
+          ]
+        },
+        "limit": 250,
+        "orderBy": true,
+        "orderByColumn": "priority",
+        "orderByDirection": "ASC"
+      },
+      "id": "627eb486-40a5-48f2-811f-8b4fb8e871f3",
+      "name": "Read Search Queue",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        800
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Check Lock & Budget').first().json;\nconst now = Date.now();\nconst rows = $input.all().map(i => i.json).filter(r => r && r.search_id);\nconst eligible = rows.filter(r => {\n  if (r.status === 'PENDING') return true;\n  if (r.status === 'RETRY') return !r.next_retry_at || new Date(r.next_retry_at).getTime() <= now;\n  if (r.status === 'RUNNING') return !r.last_run || (now - new Date(r.last_run).getTime()) > ctx.settings.lock_timeout * 60000;\n  return false;\n});\neligible.sort((a, b) => (Number(a.priority) || 999) - (Number(b.priority) || 999));\nif (!eligible.length) return [{ json: { has_search: false, queue_rows_seen: rows.length } }];\nconst s = eligible[0];\nconst area = String(s.location || '').trim();\nconst city = String(s.city || area).trim();\nconst place = area.toLowerCase().indexOf(city.toLowerCase()) >= 0 ? area : area + ', ' + city;\nreturn [{ json: {\n  has_search: true,\n  search_id: s.search_id,\n  industry: s.industry || '',\n  search_keyword: s.search_keyword || '',\n  area,\n  city,\n  region: s.region || '',\n  target_customer: s.target_customer || '',\n  retry_count: Number(s.retry_count) || 0,\n  previous_status: s.status,\n  query: s.search_keyword + ' in ' + place\n} }];"
+      },
+      "id": "b13c1ee0-389c-47a5-9b6e-31b380a472ab",
+      "name": "Pick Next Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_search }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f2a50b8a-4497-4c25-b48f-bbe57657f63b",
+      "name": "Search Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1856,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "dHo10PiVJBO0G7JA",
+          "cachedResultName": "MC_Searches"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "keyValue": "={{ $json.search_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "RUNNING",
+            "last_run": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "6ec17ef4-7a81-443b-bdab-ca2c7d486a6a",
+      "name": "Mark Search Running",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        896,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "query": "={{ $('Pick Next Search').first().json.query }}",
+        "count": 20,
+        "additionalParameters": {
+          "country": "IN",
+          "search_lang": "en",
+          "ui_lang": "en-IN",
+          "safesearch": "moderate",
+          "result_filter": [
+            "web",
+            "locations"
+          ],
+          "extra_snippets": true
+        }
+      },
+      "id": "dea425d0-1546-40ab-a104-dd8c24875aee",
+      "name": "Discover Businesses",
+      "type": "@brave/n8n-nodes-brave-search.braveSearch",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        480
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "braveSearchApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $('Pick Next Search').first().json;\nconst ctx = $('Check Lock & Budget').first().json;\nconst res = ($input.first() && $input.first().json) || {};\nconst errMsg = res.error ? (typeof res.error === 'string' ? res.error : (res.error.message || JSON.stringify(res.error))) : '';\nif (errMsg || (!res.web && !res.locations && !res.type)) {\n  return [{ json: { route: 'error', error_message: errMsg || 'Search provider returned no data', count: 0, total_found: 0, businesses: [] } }];\n}\nconst BLOCK = ['justdial.com','indiamart.com','sulekha.com','asklaila.com','tradeindia.com','exportersindia.com','yellowpages','yelp.','zomato.com','swiggy.com','practo.com','lybrate.com','magicbricks.com','99acres.com','housing.com','nobroker.in','commonfloor.com','squareyards.com','urbancompany.com','facebook.com','instagram.com','linkedin.com','youtube.com','twitter.com','x.com','wikipedia.org','quora.com','reddit.com','glassdoor','ambitionbox.com','naukri.com','indeed.','crunchbase.com','tracxn.com','zaubacorp.com','tofler.in','google.','tripadvisor','booking.com','makemytrip.com','goibibo.com','agoda.com','medium.com','builtin','revenuebase.ai','smergers.com','scribd.com','clutch.co','goodfirms.co','designrush.com','sortlist','f6s.com','wellfound.com','startupindia.gov.in','yourstory.com','inc42.com','economictimes','timesofindia','thehindu','deccanherald','hindustantimes','ndtv','moneycontrol','business-standard','livemint','urbanpro.com','shiksha.com','collegedunia.com','careers360.com','cardekho.com','carwale.com','zigwheels.com','wedmegood.com','weddingwire','weddingbazaar','fresha.com','magicpin','dineout','eazydiner','nearbuy','justdial','threebestrated','top10','bestinbangalore','mouthshut.com','grotal.com','helloleads','mapsofindia','wikimapia','zaubacorp','companiesinn','thecompanycheck','pinterest.','apps.apple.com','play.google.com','amazon.','flipkart.com','dial4trade','getit.in','nearfox','yappe.in','bizdirectory','listings','indiacustomercare','customercare','helpline','bbmp','ksrtc','nhp.gov','india.gov','mygov','wikiwand','slideshare','issuu','academia.edu','researchgate'];\nconst GOV = /(^|\\.)(gov|nic|gov\\.in|nic\\.in|mil)(\\.|$)|\\.gov\\.in$|\\.nic\\.in$|karnataka\\.gov|\\.res\\.in$/i;\nconst DOC = /\\.(pdf|docx?|xlsx?|pptx?|txt)(\\?|$)/i;\nconst LISTICLE = /(^|\\s)(top|best)\\s+\\d+|\\blist of\\b|near me|\\d+\\+?\\s+(best|top|companies|firms|agencies|clinics|listings|options|places)|\\bdirectory\\b|\\branked\\b/i;\nconst AGG_TITLE = /\\b(find|explore|browse|compare|listing|listings|dataset|reviews of|near me|list|empanelled|search for)\\b/i;\nconst rootOf = h => { const p = h.split('.'); if (p.length >= 3 && /^(co|org|net|ac|edu|gov|firm|gen|ind)$/.test(p[p.length - 2])) return p[p.length - 3]; return p.length >= 2 ? p[p.length - 2] : p[0]; };\nconst LIST_PATH = /\\/(blog|blogs|articles?|news|list|lists|top-|best-|category|tag|directory)\\b/i;\nconst strip = t => String(t || '').replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&#x27;|&#39;/g, \"'\").replace(/&quot;/g, '\"').replace(/\\s+/g, ' ').trim();\nconst hostOf = u => { const m = String(u || '').match(/^https?:\\/\\/([^\\/:?#]+)/i); return m ? m[1].toLowerCase().replace(/^www\\./, '') : ''; };\nconst blocked = h => GOV.test(h) || BLOCK.some(b => h === b || h.endsWith('.' + b) || h.indexOf(b) >= 0);\nconst originOf = u => { const m = String(u || '').match(/^(https?:\\/\\/[^\\/?#]+)/i); return m ? m[1] + '/' : ''; };\nconst pathOf = u => String(u || '').replace(/^https?:\\/\\/[^\\/?#]+/i, '') || '/';\nconst phoneRe = /(?:\\+91[\\s-]?|0)?[6-9]\\d{4}[\\s-]?\\d{5}|0?80[\\s-]?\\d{4}[\\s-]?\\d{4}/g;\nconst emailRe = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/ig;\nconst digits = p => String(p || '').replace(/\\D/g, '').slice(-10);\nconst norm = t => String(t || '').toLowerCase().replace(/[^\\p{L}\\p{N}]/gu, '');\nconst hash = str => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return Math.abs(h).toString(36).toUpperCase(); };\nfunction pickName(title, host) {\n  const root = host.split('.')[0];\n  const parts = strip(title).split(/\\s[|\\u2013\\u2014-]\\s|:\\s/).map(p => p.trim()).filter(Boolean);\n  let best = parts[0] || host;\n  let bestScore = -1;\n  for (const p of parts) {\n    const n = norm(p);\n    let sc = 0;\n    if (n && root && (n.indexOf(root) >= 0 || root.indexOf(n.slice(0, 6)) >= 0)) sc += 3;\n    if (p.length <= 60) sc += 1;\n    if (/best|top|leading|no\\.?\\s?1|services in|company in/i.test(p)) sc -= 2;\n    if (sc > bestScore) { bestScore = sc; best = p; }\n  }\n  return best.slice(0, 120);\n}\nconst web = (res.web && res.web.results) || [];\nconst out = [];\nconst seen = new Set();\nlet totalFound = 0;\nfor (const r of web) {\n  const url = r.url || '';\n  const host = hostOf(url);\n  if (!host || DOC.test(url)) continue;\n  const title = strip(r.title);\n  const loc = r.location || null;\n  const snippetText = strip([r.description || ''].concat(r.extra_snippets || []).join(' '));\n  let websiteUrl = '';\n  let opportunityHint = '';\n  let confidence = 'MEDIUM';\n  let name = '';\n  if (blocked(host)) {\n    // Single-business directory listings (no official site in this result) are kept as research candidates.\n    const isJdListing = host.indexOf('justdial.com') >= 0 && /_BZDET/i.test(url);\n    if (!isJdListing) continue;\n    name = strip(title.split(/ in | - |\\|/i)[0]);\n    websiteUrl = '';\n    opportunityHint = 'NO_WEBSITE_IN_SEARCH';\n    confidence = 'LOW';\n  } else {\n    const path = pathOf(url);\n    if (LISTICLE.test(title) || LIST_PATH.test(path) || AGG_TITLE.test(title)) continue;\n    const root = rootOf(host);\n    const brandMatch = root.length >= 4 && norm(title + ' ' + ((r.profile && r.profile.name) || '')).indexOf(norm(root)) >= 0;\n    if (!loc && !brandMatch) continue;\n    name = loc && loc.title ? strip(loc.title) : pickName(title, host);\n    if (!name || /^https?:\\/\\//i.test(name)) name = host.split('.')[0];\n    websiteUrl = originOf(url);\n  }\n  totalFound++;\n  const contact = (loc && loc.contact) || {};\n  const phoneFromText = (snippetText.match(phoneRe) || [])[0] || '';\n  const phone = contact.telephone || phoneFromText;\n  const emails = (contact.email ? [contact.email] : []).concat(snippetText.match(emailRe) || []);\n  const pa = (loc && loc.postal_address) || {};\n  let address = pa.displayAddress || '';\n  if (!address) {\n    const snip = (r.extra_snippets || []).map(strip).find(x => /\\b5\\d{5}\\b/.test(x) && x.length < 220);\n    address = snip || '';\n  }\n  const domainKey = websiteUrl ? host : '';\n  const phoneKey = digits(phone).length === 10 ? digits(phone) : '';\n  const nameCityKey = norm(name).length >= 3 ? norm(name) + '|' + norm(s.city) : '';\n  const dedupeIdentity = domainKey || phoneKey || nameCityKey;\n  if (seen.has(dedupeIdentity) || (domainKey && seen.has(domainKey)) || (phoneKey && seen.has(phoneKey))) continue;\n  [dedupeIdentity, domainKey, phoneKey, nameCityKey].filter(Boolean).forEach(k => seen.add(k));\n  out.push({\n    lead_id: 'MC-' + hash(dedupeIdentity),\n    business_name: name || host,\n    website_url: websiteUrl,\n    domain_key: domainKey,\n    phone_key: phoneKey,\n    name_city_key: nameCityKey,\n    phone: phone,\n    public_email: emails[0] || '',\n    address: address,\n    city: s.city,\n    area: s.area,\n    industry: s.industry,\n    search_id: s.search_id,\n    target_customer: s.target_customer,\n    evidence_url: url,\n    source_snippet: snippetText.slice(0, 900),\n    opportunity_hint: opportunityHint,\n    discovery_confidence: confidence,\n    rating: loc && loc.rating ? String(loc.rating.ratingValue || '') + ' (' + String(loc.rating.reviewCount || 0) + ' reviews)' : '',\n    data_source: 'Brave Search (web' + (loc ? ' + location' : '') + ')'\n  });\n}\nconst businesses = out.slice(0, ctx.settings.max_records);\nreturn [{ json: { route: businesses.length ? 'process' : 'empty', error_message: '', count: businesses.length, total_found: totalFound, raw_results: web.length, businesses } }];"
+      },
+      "id": "472861b5-04e1-4735-9a2c-0d82d2f2e626",
+      "name": "Normalise Businesses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "error",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Search failed"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "empty",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "No businesses"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "process",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Businesses found"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "73e1048a-85db-4936-84b7-1f990c755741",
+      "name": "Route Search Result",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1568,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $('Pick Next Search').first().json;\nconst ctx = $('Check Lock & Budget').first().json;\nconst err = String($input.first().json.error_message || 'Unknown search error').slice(0, 400);\nconst attempts = (Number(s.retry_count) || 0) + 1;\nconst failed = attempts >= ctx.settings.max_retries;\nconst waitMin = ctx.settings.retry_base * Math.pow(2, attempts - 1);\nreturn [{ json: {\n  search_id: s.search_id,\n  execution_id: ctx.execution_id,\n  retry_count: attempts,\n  status: failed ? 'FAILED' : 'RETRY',\n  next_retry_at: new Date(Date.now() + waitMin * 60000).toISOString(),\n  last_error: err,\n  api_cost: ctx.settings.cost_search,\n  remarks: (failed ? 'Max retries reached. ' : 'Retry ' + attempts + ' in ' + waitMin + ' min. ') + 'Error: ' + err\n} }];"
+      },
+      "id": "d8e2ce56-6c1c-49e1-ab6f-2d14a24887b6",
+      "name": "Plan Retry With Backoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "dHo10PiVJBO0G7JA",
+          "cachedResultName": "MC_Searches"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "keyValue": "={{ $json.search_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.status }}",
+            "retry_count": "={{ $json.retry_count }}",
+            "next_retry_at": "={{ $json.next_retry_at }}",
+            "last_error": "={{ $json.last_error }}",
+            "last_run": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "56acd014-20bb-41d4-b5ad-bd6967ef7ea1",
+      "name": "Mark Search For Retry",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3952,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "tglDlqaaEhKIp5N7",
+          "cachedResultName": "MC_Execution_Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "execution_id": "={{ $('Plan Retry With Backoff').first().json.execution_id }}",
+            "execution_date": "={{ $now.toISO() }}",
+            "search_id": "={{ $('Plan Retry With Backoff').first().json.search_id }}",
+            "source": "Brave Search",
+            "records_collected": 0,
+            "new_leads": 0,
+            "duplicates": 0,
+            "errors": 1,
+            "execution_status": "={{ $('Plan Retry With Backoff').first().json.status }}",
+            "api_cost": "={{ $('Plan Retry With Backoff').first().json.api_cost }}",
+            "remarks": "={{ $('Plan Retry With Backoff').first().json.remarks }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "34849d63-1a23-4418-ace0-e75d2b4be4c0",
+      "name": "Log Search Failure",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4176,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1hHjRbLNzJ4ZLoR1",
+          "cachedResultName": "MC_Config"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "config_key",
+              "keyValue": "engine_lock"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "config_value": ""
+          }
+        },
+        "options": {}
+      },
+      "id": "9ccf1b80-9510-48e4-9955-36bf69cfb579",
+      "name": "Release Lock",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5520,
+        800
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $('Pick Next Search').first().json;\nconst ctx = $('Check Lock & Budget').first().json;\nconst norm = $('Normalise Businesses').first().json;\nconst outs = $input.all().map(i => i.json).filter(j => j && j.outcome);\nconst sum = k => outs.reduce((a, o) => a + (Number(o[k]) || 0), 0);\nconst newLeads = outs.filter(o => o.outcome === 'new').length;\nconst dups = outs.filter(o => o.outcome === 'duplicate').length;\nconst errors = sum('errors');\nconst scrapes = sum('scraped');\nconst ai = sum('ai_calls');\nconst st = ctx.settings;\nconst costSearch = st.cost_search;\nconst costScrape = scrapes * st.cost_scrape;\nconst costAi = ai * st.cost_ai;\nconst total = Number((costSearch + costScrape + costAi).toFixed(4));\nconst high = outs.filter(o => o.lead_priority === 'HIGH PRIORITY').length;\nconst noSite = outs.filter(o => o.website_status === 'NO_WEBSITE_FOUND').length;\nconst capped = norm.total_found > norm.count;\nreturn [{ json: {\n  search_id: s.search_id,\n  execution_id: ctx.execution_id,\n  records_collected: Number(norm.total_found) || 0,\n  processed: outs.length,\n  new_leads: newLeads,\n  duplicates: dups,\n  errors,\n  status: errors ? 'COMPLETED_WITH_ERRORS' : 'SUCCESS',\n  api_cost: total,\n  remarks: 'query=\"' + s.query + '\"; raw_results=' + (norm.raw_results || 0) + '; processed=' + outs.length + (capped ? ' (capped at max_records_per_run)' : '') + '; high=' + high + '; no_website=' + noSite + '; cost_breakdown: search=' + costSearch.toFixed(4) + ';scrape=' + costScrape.toFixed(4) + ';ai=' + costAi.toFixed(4)\n} }];"
+      },
+      "id": "2f08f90c-eb1b-4ead-b457-746fb8a54cd0",
+      "name": "Summarise Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3328,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "dHo10PiVJBO0G7JA",
+          "cachedResultName": "MC_Searches"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "keyValue": "={{ $json.search_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "DONE",
+            "last_run": "={{ $now.toISO() }}",
+            "businesses_found": "={{ $json.records_collected }}",
+            "leads_added": "={{ $json.new_leads }}",
+            "last_error": "={{ $json.errors ? $json.errors + ' item error(s), see execution log' : '' }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "3cbf60fe-5a31-47e8-a30a-c3cf09d0224c",
+      "name": "Mark Search Done",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3552,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "tglDlqaaEhKIp5N7",
+          "cachedResultName": "MC_Execution_Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "execution_id": "={{ $('Summarise Run').first().json.execution_id }}",
+            "execution_date": "={{ $now.toISO() }}",
+            "search_id": "={{ $('Summarise Run').first().json.search_id }}",
+            "source": "Brave Search + Firecrawl + PageSpeed + OpenAI",
+            "records_collected": "={{ $('Summarise Run').first().json.records_collected }}",
+            "new_leads": "={{ $('Summarise Run').first().json.new_leads }}",
+            "duplicates": "={{ $('Summarise Run').first().json.duplicates }}",
+            "errors": "={{ $('Summarise Run').first().json.errors }}",
+            "execution_status": "={{ $('Summarise Run').first().json.status }}",
+            "api_cost": "={{ $('Summarise Run').first().json.api_cost }}",
+            "remarks": "={{ $('Summarise Run').first().json.remarks }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "05a1085a-5312-4762-b434-02a7bece1187",
+      "name": "Write Execution Log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3776,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "businesses",
+        "options": {}
+      },
+      "id": "2c525b43-347b-44a2-b079-e09d450c2202",
+      "name": "Split Businesses",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        1728,
+        496
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "0da1012e-7fea-451b-852e-f052dacbb480",
+      "name": "Current Business",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2176,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "x3kvrnCuysR8olpu",
+          "cachedResultName": "MC_Master_Leads"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "lead_id",
+              "keyValue": "={{ $json.lead_id }}"
+            },
+            {
+              "keyName": "domain_key",
+              "keyValue": "={{ $json.domain_key || '__none__' }}"
+            },
+            {
+              "keyName": "phone_key",
+              "keyValue": "={{ $json.phone_key || '__none__' }}"
+            },
+            {
+              "keyName": "name_city_key",
+              "keyValue": "={{ $json.name_city_key || '__none__' }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "8aa1c57b-f803-40cb-a597-5d203e266fc4",
+      "name": "Find Existing Lead",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        192
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.lead_id || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c77034e4-0c9c-43fc-a6ca-8d0286b7776f",
+      "name": "Already In Database?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2624,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "x3kvrnCuysR8olpu",
+          "cachedResultName": "MC_Master_Leads"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "lead_id",
+              "keyValue": "={{ $json.lead_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "last_verified": "={{ $now.toISO() }}",
+            "phone": "={{ $json.phone || $('Current Business').first().json.phone || '' }}",
+            "public_email": "={{ $json.public_email || $('Current Business').first().json.public_email || '' }}",
+            "address": "={{ $json.address || $('Current Business').first().json.address || '' }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "1399a916-eb7e-4ad4-a907-835ec0690aad",
+      "name": "Refresh Last Verified",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2848,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1",
+              "name": "outcome",
+              "value": "duplicate",
+              "type": "string"
+            },
+            {
+              "id": "d2",
+              "name": "lead_id",
+              "value": "={{ $('Current Business').first().json.lead_id }}",
+              "type": "string"
+            },
+            {
+              "id": "d3",
+              "name": "errors",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "d4",
+              "name": "scraped",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "d5",
+              "name": "ai_calls",
+              "value": 0,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "95506048-644e-43bd-89d8-21afb57ad742",
+      "name": "Mark Duplicate",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3072,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "2a16c33a-b573-4e0a-960b-14e74642c3f0",
+      "name": "Loop Over Businesses",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1952,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Current Business').first().json.website_url || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "311d80be-62c2-4b4e-9f78-5872f2dfe038",
+      "name": "Has Website?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2848,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "scrape",
+        "url": "={{ $('Current Business').first().json.website_url }}",
+        "scrapeOptions": {
+          "options": {
+            "formats": {
+              "format": [
+                {},
+                {
+                  "type": "html"
+                },
+                {
+                  "type": "links"
+                }
+              ]
+            },
+            "headers": {},
+            "onlyMainContent": false
+          }
+        },
+        "requestOptions": {}
+      },
+      "id": "5004653d-93c1-484e-8ac2-e4d12104fd63",
+      "name": "Scrape Website",
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [
+        3072,
+        192
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "firecrawlApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/pagespeedonline/v5/runPagespeed?category=performance&category=seo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $('Current Business').first().json.website_url }}"
+            },
+            {
+              "name": "strategy",
+              "value": "mobile"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "bdb0e8a5-d3e8-48a2-b4c0-ea8bc4bc7ed2",
+      "name": "PageSpeed Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3296,
+        192
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "YFDAXU29tMtVFqQU",
+          "name": "Google PageSpeed API Key (Jagan P)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const biz = $('Current Business').first().json;\nconst raw = ($('Scrape Website').first() || {}).json || {};\nconst psi = ($input.first() || {}).json || {};\nconst data = raw.data || raw;\nconst meta = data.metadata || raw.metadata || {};\nconst md = String(data.markdown || '');\nconst html = String(data.html || data.rawHtml || '');\nconst links = Array.isArray(data.links) ? data.links : [];\nconst scrapeError = raw.error ? (typeof raw.error === 'string' ? raw.error : (raw.error.message || 'scrape error')) : (raw.success === false ? 'scrape failed' : '');\nconst statusCode = Number(meta.statusCode || 0);\nconst finalUrl = String(meta.url || meta.sourceURL || biz.website_url);\nconst hostOf = u => { const m = String(u || '').match(/^https?:\\/\\/([^\\/:?#]+)/i); return m ? m[1].toLowerCase().replace(/^www\\./, '') : ''; };\nconst yearNow = new Date().getFullYear();\nconst issues = [];\nconst observations = [];\nconst improvements = [];\nlet websiteStatus = 'WEBSITE_AVAILABLE';\nif (scrapeError || (statusCode && statusCode >= 400) || (!md && !html)) websiteStatus = 'WEBSITE_INACCESSIBLE';\nelse if (/coming soon|under construction|launching soon|site is being built|website is under maintenance|domain (is )?for sale|this domain is parked|buy this domain/i.test(md.slice(0, 4000))) websiteStatus = 'UNDER_CONSTRUCTION';\nelse {\n  const a = hostOf(biz.website_url), b = hostOf(finalUrl);\n  if (a && b && a !== b && !b.endsWith('.' + a) && !a.endsWith('.' + b)) websiteStatus = 'REDIRECTS_ELSEWHERE';\n}\nconst ok = websiteStatus !== 'WEBSITE_INACCESSIBLE';\nconst ssl = !ok ? 'UNKNOWN' : (/^https:/i.test(finalUrl) ? 'HTTPS' : 'NO HTTPS');\nconst viewport = String(meta.viewport || '') || ((html.match(/<meta[^>]+name=[\"']viewport[\"'][^>]*>/i) || [])[0] || '');\nlet mobile = 'UNKNOWN';\nif (ok) mobile = /width\\s*=\\s*device-width/i.test(viewport) ? 'YES (responsive viewport meta)' : 'NOT DETECTED (no responsive viewport meta found)';\nconst lh = psi.lighthouseResult || null;\nconst perf = lh && lh.categories && lh.categories.performance && lh.categories.performance.score != null ? Math.round(lh.categories.performance.score * 100) : null;\nconst seoScore = lh && lh.categories && lh.categories.seo && lh.categories.seo.score != null ? Math.round(lh.categories.seo.score * 100) : null;\nconst psiNote = lh ? '' : (psi.error ? 'PageSpeed unavailable: ' + String(psi.error.message || psi.error).slice(0, 120) : 'PageSpeed not returned');\nconst title = String(meta.title || meta.ogTitle || '').trim();\nconst desc = String(meta.description || meta.ogDescription || '').trim();\nconst h1m = html.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/i);\nconst h1 = h1m ? h1m[1].replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim() : ((md.match(/^#\\s+(.+)$/m) || [])[1] || '');\nconst cta = /contact us|get a quote|request a quote|free quote|book (an )?appointment|book now|book a|enquire|enquiry|inquiry|request a call|call now|call us|whatsapp|get in touch|schedule a|talk to us|get started/i.test(md);\nconst hasForm = /<form[\\s\\S]{0,3000}?(type=[\"'](email|tel)[\"']|name=[\"'][^\"']*(email|phone|mobile|message)[^\"']*[\"'])/i.test(html);\nconst booking = /book (an )?appointment|book now|reserve a table|reservation|calendly|practo\\.com|book online|schedule (a )?(visit|demo|call)/i.test(md + ' ' + links.join(' '));\nconst whatsapp = /wa\\.me|api\\.whatsapp\\.com|whatsapp/i.test(md + ' ' + links.join(' '));\nconst pick = re => links.find(l => re.test(l)) || '';\nconst facebook = pick(/facebook\\.com\\/(?!sharer|share|dialog|plugins)/i);\nconst instagram = pick(/instagram\\.com\\/(?!p\\/|explore)/i);\nconst linkedin = pick(/linkedin\\.com\\/(company|in)\\//i);\nconst youtube = pick(/youtube\\.com\\/(channel|c\\/|@|user)/i);\nconst twitter = pick(/(twitter|x)\\.com\\/(?!intent|share)/i);\nconst pageEmails = (md.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/ig) || []).filter(e => !/\\.(png|jpg|jpeg|gif|webp|svg)$/i.test(e));\nconst telLinks = links.filter(l => /^tel:/i.test(l)).map(l => l.replace(/^tel:/i, ''));\nconst pagePhones = telLinks.concat(md.match(/(?:\\+91[\\s-]?|0)?[6-9]\\d{4}[\\s-]?\\d{5}|0?80[\\s-]?\\d{4}[\\s-]?\\d{4}/g) || []);\nconst years = [];\nconst yr = /(?:\\u00a9|&copy;|copyright)\\s*(?:\\d{4}\\s*[-\\u2013]\\s*)?(\\d{4})/ig;\nlet m;\nconst footerText = md.slice(-3000) + ' ' + html.slice(-6000);\nwhile ((m = yr.exec(footerText)) !== null) { const y = Number(m[1]); if (y > 1995 && y <= yearNow) years.push(y); }\nconst copyrightYear = years.length ? Math.max.apply(null, years) : null;\nconst outdated = [];\nif (/jquery[-.]?1\\.[0-9]/i.test(html)) outdated.push('jQuery 1.x detected');\nif (/<font[\\s>]|<marquee|<center>/i.test(html)) outdated.push('Legacy HTML tags (font/marquee/center)');\nif (/\\.swf|shockwave-flash/i.test(html)) outdated.push('Flash content referenced');\nif (copyrightYear && copyrightYear < yearNow - 2) outdated.push('Copyright year ' + copyrightYear + ' (content may be stale)');\nconst words = md.split(/\\s+/).filter(Boolean).length;\nif (ok) {\n  if (ssl === 'NO HTTPS') { issues.push('No HTTPS/SSL on final URL ' + finalUrl); improvements.push('Install SSL and force HTTPS'); }\n  if (/NOT DETECTED/.test(mobile)) { issues.push('No responsive viewport meta tag detected'); improvements.push('Rebuild with a mobile-responsive layout'); }\n  if (perf != null && perf < 50) { issues.push('Poor mobile PageSpeed performance score: ' + perf + '/100'); improvements.push('Optimise images, scripts and hosting for speed'); }\n  else if (perf != null && perf < 90) { issues.push('Average mobile PageSpeed performance score: ' + perf + '/100'); improvements.push('Improve Core Web Vitals'); }\n  if (!title) { issues.push('Page title missing'); improvements.push('Add keyword-focused page titles'); }\n  if (!desc) { issues.push('Meta description missing'); improvements.push('Add meta descriptions'); }\n  if (!h1) { issues.push('No H1 heading detected'); improvements.push('Add clear H1 headings and content hierarchy'); }\n  if (seoScore != null && seoScore < 80) { issues.push('Lighthouse SEO score ' + seoScore + '/100'); improvements.push('Fix technical SEO issues'); }\n  if (!cta) { issues.push('No clear call-to-action text detected on homepage'); improvements.push('Add prominent enquiry / call-to-action buttons'); }\n  if (!hasForm) { issues.push('No enquiry/contact form detected on homepage'); improvements.push('Add an enquiry form with lead capture'); }\n  if (!pageEmails.length && !pagePhones.length) { issues.push('No email or phone number visible on homepage'); improvements.push('Show contact details in header/footer'); }\n  if (!facebook && !instagram && !linkedin && !youtube) { issues.push('No social media profile links found on homepage'); improvements.push('Link official social profiles'); }\n  if (words < 150) { issues.push('Thin homepage content (' + words + ' words)'); improvements.push('Expand service descriptions and content'); }\n  outdated.forEach(o => issues.push('Outdated indicator: ' + o));\n  if (outdated.length) improvements.push('Modernise the website design and tech stack');\n  if (websiteStatus === 'UNDER_CONSTRUCTION') { issues.push('Homepage shows under-construction / placeholder text'); improvements.push('Build and launch a complete website'); }\n  if (websiteStatus === 'REDIRECTS_ELSEWHERE') { issues.push('Website redirects to a different domain: ' + finalUrl); improvements.push('Fix domain redirects / set up a dedicated website'); }\n  observations.push('Homepage words: ' + words, 'CTA: ' + (cta ? 'found' : 'not found'), 'Form: ' + (hasForm ? 'found' : 'not found'), 'Booking option: ' + (booking ? 'found' : 'not found'), 'WhatsApp: ' + (whatsapp ? 'found' : 'not found'));\n} else {\n  issues.push('Website could not be loaded' + (scrapeError ? ': ' + String(scrapeError).slice(0, 150) : (statusCode ? ' (HTTP ' + statusCode + ')' : '')));\n  improvements.push('Restore or rebuild the website');\n}\nif (psiNote) observations.push(psiNote);\nconst confidence = !ok ? 'LOW' : (lh ? 'HIGH' : 'MEDIUM');\nconst audit = {\n  website_status: websiteStatus,\n  final_url: finalUrl,\n  http_status: statusCode ? String(statusCode) : (scrapeError ? 'ERROR' : 'UNKNOWN'),\n  ssl,\n  mobile_responsive: mobile,\n  page_speed_score: perf != null ? String(perf) : 'UNKNOWN',\n  seo_score: seoScore != null ? String(seoScore) : 'UNKNOWN',\n  seo_title: title || (ok ? 'MISSING' : 'UNKNOWN'),\n  meta_description: desc || (ok ? 'MISSING' : 'UNKNOWN'),\n  h1: h1 || (ok ? 'MISSING' : 'UNKNOWN'),\n  broken_links: 'NOT TESTED (link checking not enabled)',\n  cta_status: ok ? (cta ? 'CTA FOUND' : 'NO CTA DETECTED') : 'UNKNOWN',\n  contact_form_status: ok ? (hasForm ? 'FORM FOUND' : 'NO FORM ON HOMEPAGE') : 'UNKNOWN',\n  booking_option: ok ? (booking ? 'FOUND' : 'NOT FOUND') : 'UNKNOWN',\n  whatsapp: ok ? (whatsapp ? 'FOUND' : 'NOT FOUND') : 'UNKNOWN',\n  facebook_url: facebook, instagram_url: instagram, linkedin_url: linkedin, youtube_url: youtube, twitter_url: twitter,\n  page_email: pageEmails[0] || '',\n  page_phone: pagePhones[0] || '',\n  copyright_year: copyrightYear ? String(copyrightYear) : 'NOT FOUND',\n  outdated_indicators: outdated,\n  issues,\n  improvements: Array.from(new Set(improvements)),\n  ux_observations: observations.join('; '),\n  audit_confidence: confidence,\n  scraped: 1,\n  homepage_excerpt: md.replace(/\\s+/g, ' ').slice(0, 1500)\n};\nreturn [{ json: { biz, audit } }];"
+      },
+      "id": "caada896-0131-441a-bf3b-c83640a500a1",
+      "name": "Audit Website",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5.4-mini",
+          "cachedResultName": "GPT-5.4-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Business evidence (JSON):\n{{ JSON.stringify({ business_name: $json.biz.business_name, industry_searched: $json.biz.industry, target_customer: $json.biz.target_customer, city: $json.biz.city, area: $json.biz.area, website_url: $json.biz.website_url, evidence_url: $json.biz.evidence_url, search_snippet: $json.biz.source_snippet, rating: $json.biz.rating, phone_found: !!($json.biz.phone || $json.audit.page_phone), email_found: !!($json.biz.public_email || $json.audit.page_email), audit: { website_status: $json.audit.website_status, ssl: $json.audit.ssl, mobile: $json.audit.mobile_responsive, pagespeed_mobile: $json.audit.page_speed_score, seo_score: $json.audit.seo_score, title: $json.audit.seo_title, meta_description: $json.audit.meta_description, h1: $json.audit.h1, cta: $json.audit.cta_status, form: $json.audit.contact_form_status, booking: $json.audit.booking_option, whatsapp: $json.audit.whatsapp, social: [$json.audit.facebook_url, $json.audit.instagram_url, $json.audit.linkedin_url, $json.audit.youtube_url].filter(Boolean), copyright_year: $json.audit.copyright_year, issues: $json.audit.issues, homepage_excerpt: $json.audit.homepage_excerpt } }) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "instructions": "You are a B2B lead researcher for Magnus Copo, a Bangalore digital solutions company selling: website development, website redesign, website maintenance, SEO, digital marketing, landing pages, and business automation/software.\nAssess ONE business using ONLY the evidence provided. Never invent facts, contacts, sizes or issues. If evidence is insufficient, say \"Unknown\" and score conservatively.\nRules:\n- is_real_business = false if the evidence is a directory, article, listing page, marketplace, job post, government department, municipal or public-sector body, PSU, helpline/contact aggregator, or not a single identifiable private business or institution that could buy Magnus Copo services.\n- business_size_estimate: Startup, Small, SME, Medium, Large or Unknown, based only on explicit evidence (branches, team size, years, client counts).\n- website_quality: NONE (no site), POOR, AVERAGE, GOOD or UNKNOWN; base it on the audit fields.\n- business_fit_score 0-20: how well the business fits Magnus Copo's offerings and has budget potential (high-value B2B such as manufacturing, real estate, healthcare, education, engineering, professional services score higher).\n- growth_potential_score 0-10: only award points for explicit growth evidence (new branches, hiring, funding, expansion, new launches); otherwise 0-4.\n- recommended_services: choose from Website Development, Website Redesign, Website Maintenance, SEO, Digital Marketing, Landing Page Development, Business Automation.\n- opportunity_types: choose from A_NO_WEBSITE, B_OUTDATED_WEBSITE, C_SEO, D_DIGITAL_MARKETING, E_GROWING_BUSINESS, F_HIGH_VALUE_B2B.\n- main_digital_problems: short items citing the audit evidence.\n- sales_pitch: 2-3 sentences, specific to the evidence, polite, no fabricated claims.\n- qualification_reason: one or two sentences.",
+          "maxTokens": 3000,
+          "reasoning": {
+            "reasoningOptions": {
+              "effort": "low",
+              "summary": "none"
+            }
+          },
+          "store": false,
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "name": "lead_qualification",
+              "schema": "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"is_real_business\",\"business_name\",\"business_category\",\"sub_category\",\"business_size_estimate\",\"website_quality\",\"main_digital_problems\",\"recommended_services\",\"opportunity_types\",\"business_fit_score\",\"growth_potential_score\",\"sales_pitch\",\"qualification_reason\"],\"properties\":{\"is_real_business\":{\"type\":\"boolean\"},\"business_name\":{\"type\":\"string\"},\"business_category\":{\"type\":\"string\"},\"sub_category\":{\"type\":\"string\"},\"business_size_estimate\":{\"type\":\"string\",\"enum\":[\"Startup\",\"Small\",\"SME\",\"Medium\",\"Large\",\"Unknown\"]},\"website_quality\":{\"type\":\"string\",\"enum\":[\"NONE\",\"POOR\",\"AVERAGE\",\"GOOD\",\"UNKNOWN\"]},\"main_digital_problems\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"recommended_services\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"Website Development\",\"Website Redesign\",\"Website Maintenance\",\"SEO\",\"Digital Marketing\",\"Landing Page Development\",\"Business Automation\"]}},\"opportunity_types\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"A_NO_WEBSITE\",\"B_OUTDATED_WEBSITE\",\"C_SEO\",\"D_DIGITAL_MARKETING\",\"E_GROWING_BUSINESS\",\"F_HIGH_VALUE_B2B\"]}},\"business_fit_score\":{\"type\":\"integer\"},\"growth_potential_score\":{\"type\":\"integer\"},\"sales_pitch\":{\"type\":\"string\"},\"qualification_reason\":{\"type\":\"string\"}}}",
+              "strict": true
+            }
+          }
+        }
+      },
+      "id": "6edc537b-c602-4e2d-8e26-f79cfe967d9c",
+      "name": "AI Lead Qualification",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        3744,
+        288
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const biz = $('Current Business').first().json;\nconst prep = biz.website_url ? $('Audit Website').first().json : $('Prepare No-Website Profile').first().json;\nconst audit = prep.audit;\nconst aiRaw = ($input.first() || {}).json || {};\nlet ai = null;\nlet aiError = '';\ntry {\n  const t = aiRaw.output && aiRaw.output[0] && aiRaw.output[0].content && aiRaw.output[0].content[0] ? aiRaw.output[0].content[0].text : null;\n  ai = typeof t === 'string' ? JSON.parse(t) : t;\n} catch (e) { ai = null; }\nif (ai && typeof ai === 'object' && typeof ai.business_fit_score === 'undefined' && typeof ai.is_real_business === 'undefined') ai = null;\nif (!ai || typeof ai !== 'object') aiError = aiRaw.error ? String(aiRaw.error.message || aiRaw.error).slice(0, 200) : 'AI output missing or not in expected format';\nif (ai) {\n  const arr = v => Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];\n  ai = { is_real_business: ai.is_real_business !== false, business_name: String(ai.business_name || ''), business_category: String(ai.business_category || 'Unknown'), sub_category: String(ai.sub_category || ''), business_size_estimate: String(ai.business_size_estimate || 'Unknown'), website_quality: String(ai.website_quality || 'UNKNOWN'), main_digital_problems: arr(ai.main_digital_problems), recommended_services: arr(ai.recommended_services), opportunity_types: arr(ai.opportunity_types), business_fit_score: ai.business_fit_score, growth_potential_score: ai.growth_potential_score, sales_pitch: String(ai.sales_pitch || ''), qualification_reason: String(ai.qualification_reason || '') };\n}\nconst clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(v) || 0)));\nconst ws = audit.website_status;\n// 1. Website opportunity (0-30) - deterministic from audit evidence\nlet websiteOpp = 0;\nif (ws === 'NO_WEBSITE_FOUND') websiteOpp = 26;\nelse if (ws === 'WEBSITE_INACCESSIBLE' || ws === 'UNDER_CONSTRUCTION') websiteOpp = 27;\nelse if (ws === 'REDIRECTS_ELSEWHERE') websiteOpp = 20;\nelse {\n  const perf = Number(audit.page_speed_score);\n  if (audit.ssl === 'NO HTTPS') websiteOpp += 6;\n  if (/NOT DETECTED/.test(audit.mobile_responsive)) websiteOpp += 6;\n  if (!isNaN(perf)) websiteOpp += perf < 50 ? 6 : (perf < 90 ? 3 : 0);\n  if (audit.seo_title === 'MISSING') websiteOpp += 3;\n  if (audit.meta_description === 'MISSING') websiteOpp += 3;\n  if (audit.cta_status === 'NO CTA DETECTED') websiteOpp += 3;\n  if (audit.contact_form_status === 'NO FORM ON HOMEPAGE') websiteOpp += 3;\n  if ((audit.outdated_indicators || []).length) websiteOpp += 4;\n  websiteOpp = Math.min(30, websiteOpp);\n}\n// 2. Digital presence gaps (0-20)\nlet gaps = 0;\nconst socialCount = [audit.facebook_url, audit.instagram_url, audit.linkedin_url, audit.youtube_url].filter(Boolean).length;\nif (ws === 'NO_WEBSITE_FOUND') gaps = 12;\nelse {\n  if (socialCount === 0) gaps += 6; else if (socialCount === 1) gaps += 3;\n  if (audit.contact_form_status === 'NO FORM ON HOMEPAGE') gaps += 5;\n  if (audit.booking_option === 'NOT FOUND') gaps += 3;\n  const seo = Number(audit.seo_score);\n  if ((!isNaN(seo) && seo < 80) || audit.meta_description === 'MISSING') gaps += 6;\n  gaps = Math.min(20, gaps);\n}\n// 3. Contact availability (0-10)\nconst phone = biz.phone || audit.page_phone || '';\nconst email = biz.public_email || audit.page_email || '';\nconst contactPts = (phone ? 5 : 0) + (email ? 3 : 0) + (biz.address ? 2 : 0);\n// 4. Evidence confidence (0-10)\nconst conf = audit.audit_confidence === 'HIGH' ? 'HIGH' : (audit.audit_confidence === 'MEDIUM' ? 'MEDIUM' : 'LOW');\nconst confPts = conf === 'HIGH' ? 10 : (conf === 'MEDIUM' ? 6 : 3);\n// 5/6. AI-judged fit and growth\nconst fit = ai ? clamp(ai.business_fit_score, 0, 20) : 0;\nconst growth = ai ? clamp(ai.growth_potential_score, 0, 10) : 0;\nlet score = websiteOpp + gaps + contactPts + confPts + fit + growth;\nconst remarks = [];\nif (ai && ai.is_real_business === false) { score = Math.min(score, 30); remarks.push('AI flagged this result as not a single identifiable business'); }\nif (aiError) remarks.push('AI qualification failed: ' + aiError);\nscore = clamp(score, 0, 100);\nlet priority = score >= 80 ? 'HIGH PRIORITY' : score >= 60 ? 'MEDIUM PRIORITY' : score >= 40 ? 'LOW PRIORITY' : (conf === 'LOW' || aiError ? 'RESEARCH REQUIRED' : 'REJECT');\nconst days = priority === 'HIGH PRIORITY' ? 1 : priority === 'MEDIUM PRIORITY' ? 3 : priority === 'LOW PRIORITY' ? 7 : 30;\nconst follow = new Date(Date.now() + days * 86400000).toISOString();\nconst services = ai && ai.recommended_services && ai.recommended_services.length ? ai.recommended_services : (ws === 'NO_WEBSITE_FOUND' ? ['Website Development'] : []);\nconst oppTypes = ai && ai.opportunity_types && ai.opportunity_types.length ? ai.opportunity_types : (ws === 'NO_WEBSITE_FOUND' ? ['A_NO_WEBSITE'] : []);\nconst problems = ai && ai.main_digital_problems && ai.main_digital_problems.length ? ai.main_digital_problems : audit.issues;\nconst breakdown = 'Score ' + score + '/100 = website ' + websiteOpp + '/30 + gaps ' + gaps + '/20 + contact ' + contactPts + '/10 + confidence ' + confPts + '/10 + fit ' + fit + '/20 + growth ' + growth + '/10';\nconst websiteQuality = ws === 'NO_WEBSITE_FOUND' ? 'NONE' : (ws !== 'WEBSITE_AVAILABLE' ? 'POOR' : (ai ? ai.website_quality : 'UNKNOWN'));\nconst seoStatus = ws === 'NO_WEBSITE_FOUND' ? 'N/A' : ((audit.seo_title === 'MISSING' || audit.meta_description === 'MISSING' || (Number(audit.seo_score) < 80)) ? 'WEAK' : (audit.seo_score === 'UNKNOWN' ? 'UNKNOWN' : 'OK')) + (audit.seo_score !== 'UNKNOWN' && audit.seo_score !== 'N/A' ? ' (Lighthouse ' + audit.seo_score + ')' : '');\nconst nowIso = new Date().toISOString();\nreturn [{ json: {\n  lead_id: biz.lead_id,\n  date_added: nowIso,\n  business_name: (ai && ai.business_name) || biz.business_name,\n  industry: biz.industry,\n  sub_category: ai ? ai.sub_category : '',\n  business_size: ai ? ai.business_size_estimate : 'Unknown',\n  city: biz.city,\n  area: biz.area,\n  address: biz.address || '',\n  phone: phone,\n  public_email: email,\n  website_url: biz.website_url || '',\n  website_status: ws,\n  website_quality: websiteQuality,\n  mobile_friendly: audit.mobile_responsive,\n  ssl_status: audit.ssl,\n  page_speed: audit.page_speed_score,\n  seo_status: seoStatus,\n  social_media_url: [audit.youtube_url, audit.twitter_url].filter(Boolean).join(' | '),\n  linkedin_url: audit.linkedin_url || '',\n  instagram_url: audit.instagram_url || '',\n  facebook_url: audit.facebook_url || '',\n  digital_gaps: problems.join('; ').slice(0, 2000),\n  recommended_service: services.join(', '),\n  opportunity_type: oppTypes.join(', '),\n  ai_analysis: ((ai ? (ai.business_category + ' | ' + ai.qualification_reason) : 'AI unavailable') + ' | ' + breakdown).slice(0, 2000),\n  sales_pitch: ai ? ai.sales_pitch : '',\n  lead_score: score,\n  lead_priority: priority,\n  evidence_url: biz.evidence_url,\n  data_source: biz.data_source + (biz.website_url ? ' + Firecrawl + PageSpeed' : '') + (ai ? ' + OpenAI' : ''),\n  confidence: conf,\n  contact_status: 'NOT CONTACTED',\n  follow_up_date: follow,\n  assigned_to: 'Unassigned',\n  lead_status: priority === 'RESEARCH REQUIRED' ? 'RESEARCH REQUIRED' : (priority === 'REJECT' ? 'REJECTED' : 'NEW'),\n  remarks: remarks.concat(biz.rating ? ['Rating: ' + biz.rating] : []).join('; '),\n  last_verified: nowIso,\n  search_id: biz.search_id,\n  domain_key: biz.domain_key || '',\n  phone_key: biz.phone_key || '',\n  name_city_key: (function () { const n = String((ai && ai.business_name) || biz.business_name || '').toLowerCase().replace(/[^\\p{L}\\p{N}]/gu, ''); return n.length >= 3 ? n + '|' + String(biz.city || '').toLowerCase().replace(/[^\\p{L}\\p{N}]/gu, '') : (biz.name_city_key || ''); })(),\n  audit_final_url: audit.final_url,\n  audit_http_status: audit.http_status,\n  audit_seo_score: audit.seo_score,\n  audit_title: audit.seo_title,\n  audit_meta: audit.meta_description,\n  audit_broken_links: audit.broken_links,\n  audit_cta: audit.cta_status,\n  audit_form: audit.contact_form_status,\n  audit_ux: audit.ux_observations,\n  audit_issues: audit.issues.join('; ').slice(0, 2000),\n  audit_improvements: audit.improvements.join('; ').slice(0, 2000),\n  pipeline_worthy: priority === 'HIGH PRIORITY' || priority === 'MEDIUM PRIORITY',\n  scraped: audit.scraped || 0,\n  ai_calls: 1,\n  errors: aiError ? 1 : 0\n} }];"
+      },
+      "id": "5e1517bd-7842-4cd9-82fc-a32615c708bc",
+      "name": "Score & Finalise Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4096,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "x3kvrnCuysR8olpu",
+          "cachedResultName": "MC_Master_Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $json.lead_id }}",
+            "date_added": "={{ $json.date_added }}",
+            "business_name": "={{ $json.business_name }}",
+            "industry": "={{ $json.industry }}",
+            "sub_category": "={{ $json.sub_category }}",
+            "business_size": "={{ $json.business_size }}",
+            "city": "={{ $json.city }}",
+            "area": "={{ $json.area }}",
+            "address": "={{ $json.address }}",
+            "phone": "={{ $json.phone }}",
+            "public_email": "={{ $json.public_email }}",
+            "website_url": "={{ $json.website_url }}",
+            "website_status": "={{ $json.website_status }}",
+            "website_quality": "={{ $json.website_quality }}",
+            "mobile_friendly": "={{ $json.mobile_friendly }}",
+            "ssl_status": "={{ $json.ssl_status }}",
+            "page_speed": "={{ $json.page_speed }}",
+            "seo_status": "={{ $json.seo_status }}",
+            "social_media_url": "={{ $json.social_media_url }}",
+            "linkedin_url": "={{ $json.linkedin_url }}",
+            "instagram_url": "={{ $json.instagram_url }}",
+            "facebook_url": "={{ $json.facebook_url }}",
+            "digital_gaps": "={{ $json.digital_gaps }}",
+            "recommended_service": "={{ $json.recommended_service }}",
+            "opportunity_type": "={{ $json.opportunity_type }}",
+            "ai_analysis": "={{ $json.ai_analysis }}",
+            "sales_pitch": "={{ $json.sales_pitch }}",
+            "lead_score": "={{ $json.lead_score }}",
+            "lead_priority": "={{ $json.lead_priority }}",
+            "evidence_url": "={{ $json.evidence_url }}",
+            "data_source": "={{ $json.data_source }}",
+            "confidence": "={{ $json.confidence }}",
+            "contact_status": "={{ $json.contact_status }}",
+            "follow_up_date": "={{ $json.follow_up_date }}",
+            "assigned_to": "={{ $json.assigned_to }}",
+            "lead_status": "={{ $json.lead_status }}",
+            "remarks": "={{ $json.remarks }}",
+            "last_verified": "={{ $json.last_verified }}",
+            "search_id": "={{ $json.search_id }}",
+            "domain_key": "={{ $json.domain_key }}",
+            "phone_key": "={{ $json.phone_key }}",
+            "name_city_key": "={{ $json.name_city_key }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "87589077-f028-4813-a5c1-9faac4e527a1",
+      "name": "Save Lead",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4320,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "k1qHYwTX0gT6HKRy",
+          "cachedResultName": "MC_Website_Audit"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Score & Finalise Lead').first().json.lead_id }}",
+            "business_name": "={{ $('Score & Finalise Lead').first().json.business_name }}",
+            "website_url": "={{ $('Score & Finalise Lead').first().json.website_url || 'NO WEBSITE' }}",
+            "final_url": "={{ $('Score & Finalise Lead').first().json.audit_final_url }}",
+            "audit_date": "={{ $now.toISO() }}",
+            "http_status": "={{ $('Score & Finalise Lead').first().json.audit_http_status }}",
+            "ssl": "={{ $('Score & Finalise Lead').first().json.ssl_status }}",
+            "mobile_responsive": "={{ $('Score & Finalise Lead').first().json.mobile_friendly }}",
+            "page_speed_score": "={{ $('Score & Finalise Lead').first().json.page_speed }}",
+            "seo_score": "={{ $('Score & Finalise Lead').first().json.audit_seo_score }}",
+            "seo_title": "={{ $('Score & Finalise Lead').first().json.audit_title }}",
+            "meta_description": "={{ $('Score & Finalise Lead').first().json.audit_meta }}",
+            "broken_links": "={{ $('Score & Finalise Lead').first().json.audit_broken_links }}",
+            "cta_status": "={{ $('Score & Finalise Lead').first().json.audit_cta }}",
+            "contact_form_status": "={{ $('Score & Finalise Lead').first().json.audit_form }}",
+            "ux_observations": "={{ $('Score & Finalise Lead').first().json.audit_ux }}",
+            "issues_found": "={{ $('Score & Finalise Lead').first().json.audit_issues }}",
+            "recommended_improvements": "={{ $('Score & Finalise Lead').first().json.audit_improvements }}",
+            "confidence": "={{ $('Score & Finalise Lead').first().json.confidence }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "e050dd09-c8fd-4bf3-8a09-6894d1fb2960",
+      "name": "Save Website Audit",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4544,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Score & Finalise Lead').first().json.pipeline_worthy }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "260ff816-1ae6-4ffe-ba34-4d2942de6ee7",
+      "name": "High Or Medium Priority?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4768,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WMq4gtVRiKM2hCbb",
+          "cachedResultName": "MC_Sales_Pipeline"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Score & Finalise Lead').first().json.lead_id }}",
+            "business_name": "={{ $('Score & Finalise Lead').first().json.business_name }}",
+            "phone": "={{ $('Score & Finalise Lead').first().json.phone }}",
+            "email": "={{ $('Score & Finalise Lead').first().json.public_email }}",
+            "lead_priority": "={{ $('Score & Finalise Lead').first().json.lead_priority }}",
+            "recommended_service": "={{ $('Score & Finalise Lead').first().json.recommended_service }}",
+            "call_status": "NOT STARTED",
+            "meeting_status": "NOT SCHEDULED",
+            "proposal_status": "NOT SENT",
+            "next_follow_up": "={{ $('Score & Finalise Lead').first().json.follow_up_date }}",
+            "sales_owner": "Unassigned",
+            "deal_status": "OPEN",
+            "remarks": "={{ 'Auto-added by lead engine. Score ' + $('Score & Finalise Lead').first().json.lead_score }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "028eec50-3947-469f-a043-30e56314c207",
+      "name": "Add To Sales Pipeline",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4992,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n1",
+              "name": "outcome",
+              "value": "new",
+              "type": "string"
+            },
+            {
+              "id": "n2",
+              "name": "lead_id",
+              "value": "={{ $('Score & Finalise Lead').first().json.lead_id }}",
+              "type": "string"
+            },
+            {
+              "id": "n3",
+              "name": "lead_priority",
+              "value": "={{ $('Score & Finalise Lead').first().json.lead_priority }}",
+              "type": "string"
+            },
+            {
+              "id": "n4",
+              "name": "website_status",
+              "value": "={{ $('Score & Finalise Lead').first().json.website_status }}",
+              "type": "string"
+            },
+            {
+              "id": "n5",
+              "name": "errors",
+              "value": "={{ $('Score & Finalise Lead').first().json.errors }}",
+              "type": "number"
+            },
+            {
+              "id": "n6",
+              "name": "scraped",
+              "value": "={{ $('Score & Finalise Lead').first().json.scraped }}",
+              "type": "number"
+            },
+            {
+              "id": "n7",
+              "name": "ai_calls",
+              "value": "={{ $('Score & Finalise Lead').first().json.ai_calls }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1ad52b30-9bf2-44d3-8d5d-a5cc31efdc7b",
+      "name": "Mark New Lead",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5216,
+        432
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const biz = $('Current Business').first().json;\nconst audit = {\n  website_status: 'NO_WEBSITE_FOUND',\n  final_url: '', http_status: 'N/A', ssl: 'N/A', mobile_responsive: 'N/A', page_speed_score: 'N/A', seo_score: 'N/A',\n  seo_title: 'N/A', meta_description: 'N/A', h1: 'N/A', broken_links: 'N/A', cta_status: 'N/A', contact_form_status: 'N/A',\n  booking_option: 'UNKNOWN', whatsapp: 'UNKNOWN',\n  facebook_url: '', instagram_url: '', linkedin_url: '', youtube_url: '', twitter_url: '',\n  page_email: '', page_phone: '', copyright_year: 'N/A', outdated_indicators: [],\n  issues: ['No official website found in search results (found only via directory listing ' + biz.evidence_url + '); not independently verified'],\n  improvements: ['Build an official business website', 'Set up Google Business Profile and local SEO'],\n  ux_observations: 'No website to audit',\n  audit_confidence: 'LOW',\n  scraped: 0,\n  homepage_excerpt: ''\n};\nreturn [{ json: { biz, audit } }];"
+      },
+      "id": "4d39889b-cad4-4406-9aee-eae6d7bbeb4f",
+      "name": "Prepare No-Website Profile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "dHo10PiVJBO0G7JA",
+          "cachedResultName": "MC_Searches"
+        },
+        "returnAll": true
+      },
+      "id": "3369f47c-750a-45a7-b37f-8ea99b964532",
+      "name": "Read Past Searches",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1872,
+        944
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const used = new Set($input.all().map(i => i.json).filter(r => r && r.search_id).map(r => String(r.search_keyword || '').toLowerCase() + '|' + String(r.location || '').toLowerCase()));\nconst industries = [\n  ['Web Design & Digital Agencies', 'web design company', 'Businesses wanting better web presence'],\n  ['Manufacturing', 'manufacturing company', 'B2B manufacturers needing a modern website and lead capture'],\n  ['Real Estate', 'real estate developer', 'Builders and brokers needing listings sites and landing pages'],\n  ['Healthcare Clinics', 'private clinic', 'Clinics needing online booking and SEO'],\n  ['Education & Coaching', 'coaching institute', 'Institutes needing admissions websites and marketing'],\n  ['Engineering Services', 'engineering services company', 'B2B engineering firms needing credibility websites'],\n  ['Professional Services', 'chartered accountant firm', 'Professional firms needing a web presence and SEO'],\n  ['Restaurants & Cafes', 'restaurant', 'Restaurants needing websites, ordering and local SEO'],\n  ['Salons & Wellness', 'beauty salon', 'Salons and spas needing booking websites'],\n  ['Logistics & Transport', 'logistics company', 'Logistics firms needing websites and automation'],\n  ['Interior Design', 'interior designer', 'Interior studios needing portfolio websites'],\n  ['Legal Services', 'law firm', 'Law firms needing websites and SEO'],\n  ['Event & Wedding Services', 'event management company', 'Event companies needing portfolios and marketing'],\n  ['Auto Services', 'car service centre', 'Garages needing booking sites and local SEO'],\n  ['IT & Software Services', 'software development company', 'IT firms needing redesigns and SEO']\n];\nconst areas = [['Whitefield','Bengaluru'],['Koramangala','Bengaluru'],['Indiranagar','Bengaluru'],['Jayanagar','Bengaluru'],['HSR Layout','Bengaluru'],['Electronic City','Bengaluru'],['Peenya','Bengaluru'],['Yelahanka','Bengaluru'],['Marathahalli','Bengaluru'],['JP Nagar','Bengaluru'],['Rajajinagar','Bengaluru'],['Hebbal','Bengaluru'],['Mysuru','Mysuru'],['Hubballi','Hubballi'],['Mangaluru','Mangaluru'],['Belagavi','Belagavi']];\nconst combos = [];\nfor (const ind of industries) for (const a of areas) { if (!used.has(ind[1].toLowerCase() + '|' + a[0].toLowerCase())) combos.push({ ind, a }); }\nconst pool = combos.length ? combos : industries.flatMap(ind => areas.map(a => ({ ind, a })));\nconst pick = pool[Math.floor(Math.random() * pool.length)];\nreturn [{ json: {\n  search_id: 'SRCH-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 5).toUpperCase(),\n  industry: pick.ind[0],\n  search_keyword: pick.ind[1],\n  location: pick.a[0],\n  city: pick.a[1],\n  region: 'Karnataka',\n  target_customer: pick.ind[2],\n  priority: 1,\n  status: 'PENDING',\n  retry_count: 0\n} }];"
+      },
+      "id": "87ce1200-1d59-42b8-accd-0b7741000068",
+      "name": "Generate Fresh Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "dHo10PiVJBO0G7JA",
+          "cachedResultName": "MC_Searches"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_id": "={{ $json.search_id }}",
+            "industry": "={{ $json.industry }}",
+            "search_keyword": "={{ $json.search_keyword }}",
+            "location": "={{ $json.location }}",
+            "city": "={{ $json.city }}",
+            "region": "={{ $json.region }}",
+            "target_customer": "={{ $json.target_customer }}",
+            "priority": "={{ $json.priority }}",
+            "status": "PENDING",
+            "retry_count": 0
+          }
+        },
+        "options": {}
+      },
+      "id": "fb23ce90-1370-4817-9158-8d902ec0ed46",
+      "name": "Queue Fresh Search",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2704,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 19
+            }
+          ]
+        }
+      },
+      "id": "2ffa2cda-8da0-4df5-9277-137732aaae2d",
+      "name": "Daily 7 PM Summary",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "x3kvrnCuysR8olpu",
+          "cachedResultName": "MC_Master_Leads"
+        },
+        "returnAll": true
+      },
+      "id": "013d4e63-817c-4a09-8337-cc40101689ba",
+      "name": "Read All Leads",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        1392
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "tglDlqaaEhKIp5N7",
+          "cachedResultName": "MC_Execution_Log"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "execution_date",
+              "condition": "gte",
+              "keyValue": "={{ $today.minus({ days: 30 }).toISO() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "6dd26e47-1dee-4aa5-b9af-3529520a660c",
+      "name": "Read Last 30 Days Of Logs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        512,
+        1392
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "dHo10PiVJBO0G7JA",
+          "cachedResultName": "MC_Searches"
+        },
+        "returnAll": true
+      },
+      "id": "3034cc60-36af-49ed-8b31-350bbd462e4c",
+      "name": "Read Queue Status",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        736,
+        1392
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $('Read All Leads').all().map(i => i.json).filter(r => r && r.lead_id);\nconst logs = $('Read Last 30 Days Of Logs').all().map(i => i.json).filter(r => r && r.execution_id);\nconst searches = $input.all().map(i => i.json).filter(r => r && r.search_id);\nconst now = new Date();\nconst startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();\nconst day = 86400000;\nconst t = r => new Date(r.date_added || r.execution_date || 0).getTime();\nconst today = leads.filter(l => t(l) >= startToday);\nconst week = leads.filter(l => t(l) >= startToday - 6 * day);\nconst month = leads.filter(l => t(l) >= startToday - 29 * day);\nconst logsToday = logs.filter(l => t(l) >= startToday);\nconst count = (arr, f) => arr.filter(f).length;\nconst pr = p => l => l.lead_priority === p;\nconst noSite = l => l.website_status === 'NO_WEBSITE_FOUND';\nconst poorSite = l => l.website_quality === 'POOR' || ['WEBSITE_INACCESSIBLE', 'UNDER_CONSTRUCTION', 'REDIRECTS_ELSEWHERE'].indexOf(l.website_status) >= 0;\nconst svc = s => l => String(l.recommended_service || '').indexOf(s) >= 0;\nconst groupBy = (arr, k) => { const m = {}; arr.forEach(r => { const v = r[k] || 'Unknown'; m[v] = (m[v] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 12); };\nconst costs = { search: 0, scrape: 0, ai: 0 };\nlogsToday.forEach(l => { const m = String(l.remarks || '').match(/search=([\\d.]+);scrape=([\\d.]+);ai=([\\d.]+)/); if (m) { costs.search += +m[1]; costs.scrape += +m[2]; costs.ai += +m[3]; } else { costs.search += Number(l.api_cost) || 0; } });\nconst spendToday = logsToday.reduce((a, l) => a + (Number(l.api_cost) || 0), 0);\nconst spendMonth = logs.reduce((a, l) => a + (Number(l.api_cost) || 0), 0);\nconst q = s => count(searches, r => r.status === s);\nconst failedToday = logsToday.filter(l => l.execution_status === 'RETRY' || l.execution_status === 'FAILED');\nconst rows = pairs => pairs.map(p => '<tr><td style=\"padding:3px 10px\">' + p[0] + '</td><td style=\"padding:3px 10px;text-align:right\"><b>' + p[1] + '</b></td></tr>').join('');\nconst table = (title, pairs) => '<h3 style=\"margin:18px 0 6px\">' + title + '</h3><table style=\"border-collapse:collapse;border:1px solid #ddd\">' + rows(pairs) + '</table>';\nconst topToday = today.filter(pr('HIGH PRIORITY')).sort((a, b) => b.lead_score - a.lead_score).slice(0, 10).map(l => [l.business_name + ' (' + (l.area || l.city) + ') - ' + (l.recommended_service || ''), l.lead_score]);\nconst html = [\n  '<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">',\n  '<h2>Magnus Copo - Daily Lead Generation Summary</h2>',\n  '<p>' + now.toDateString() + '</p>',\n  table('Today', [['Businesses processed (new + duplicates)', logsToday.reduce((a, l) => a + (Number(l.new_leads) || 0) + (Number(l.duplicates) || 0), 0)], ['New leads added', today.length], ['High-priority leads', count(today, pr('HIGH PRIORITY'))], ['Medium-priority leads', count(today, pr('MEDIUM PRIORITY'))], ['Low-priority leads', count(today, pr('LOW PRIORITY'))], ['Businesses without a website', count(today, noSite)], ['Website redesign opportunities', count(today, svc('Website Redesign'))], ['Searches run', logsToday.length], ['Failed / retried searches', failedToday.length]]),\n  topToday.length ? table('Top high-priority leads today', topToday) : '',\n  table('Estimated API usage (today)', [['Search', '$' + costs.search.toFixed(3)], ['Website scraping', '$' + costs.scrape.toFixed(3)], ['AI qualification', '$' + costs.ai.toFixed(3)], ['Total today', '$' + spendToday.toFixed(3)], ['Last 30 days', '$' + spendMonth.toFixed(3)]]),\n  table('Dashboard - all time', [['Total leads in database', leads.length], ['Businesses without websites', count(leads, noSite)], ['Businesses with poor websites', count(leads, poorSite)], ['High priority', count(leads, pr('HIGH PRIORITY'))], ['Medium priority', count(leads, pr('MEDIUM PRIORITY'))], ['Low priority', count(leads, pr('LOW PRIORITY'))], ['Website development opportunities', count(leads, svc('Website Development'))], ['Website redesign opportunities', count(leads, svc('Website Redesign'))], ['SEO opportunities', count(leads, svc('SEO'))], ['Marketing opportunities', count(leads, svc('Digital Marketing'))], ['Leads this week', week.length], ['Leads this month', month.length]]),\n  table('Leads by industry (top 12)', groupBy(leads, 'industry')),\n  table('Leads by city / area (top 12)', groupBy(leads, 'area')),\n  table('Search queue', [['Pending', q('PENDING')], ['Done', q('DONE')], ['Waiting to retry', q('RETRY')], ['Failed (max retries)', q('FAILED')], ['Running', q('RUNNING')]]),\n  '<p style=\"color:#777;font-size:12px\">Costs are estimates from MC_Config unit prices, not provider invoices. Full data: n8n Data Tables MC_Master_Leads, MC_Website_Audit, MC_Sales_Pipeline, MC_Execution_Log.</p>',\n  '</div>'\n].join('');\nreturn [{ json: { subject: 'Magnus Copo leads - ' + today.length + ' new, ' + count(today, pr('HIGH PRIORITY')) + ' high priority (' + now.toDateString() + ')', html } }];"
+      },
+      "id": "43c80de2-13ae-4b11-be27-98efba9c609a",
+      "name": "Build Daily Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        1392
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "jaaggaan777@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Magnus Copo Lead Engine"
+        }
+      },
+      "id": "684741ec-f77e-4778-9c35-6f5e787de5ac",
+      "name": "Email Daily Summary",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1184,
+        1392
+      ],
+      "webhookId": "c1a3bb9f-a529-4330-b971-42f2e8914a08",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "T4zqtfzYRk1FbPzb",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Engine Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Engine Config": {
+      "main": [
+        [
+          {
+            "node": "Read Today's Spend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Today's Spend": {
+      "main": [
+        [
+          {
+            "node": "Check Lock & Budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Lock & Budget": {
+      "main": [
+        [
+          {
+            "node": "Can Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Run?": {
+      "main": [
+        [
+          {
+            "node": "Acquire Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acquire Lock": {
+      "main": [
+        [
+          {
+            "node": "Read Search Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Search Queue": {
+      "main": [
+        [
+          {
+            "node": "Pick Next Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Next Search": {
+      "main": [
+        [
+          {
+            "node": "Search Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Available?": {
+      "main": [
+        [
+          {
+            "node": "Mark Search Running",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Past Searches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Search Running": {
+      "main": [
+        [
+          {
+            "node": "Discover Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Businesses": {
+      "main": [
+        [
+          {
+            "node": "Normalise Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise Businesses": {
+      "main": [
+        [
+          {
+            "node": "Route Search Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Search Result": {
+      "main": [
+        [
+          {
+            "node": "Plan Retry With Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Summarise Run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Retry With Backoff": {
+      "main": [
+        [
+          {
+            "node": "Mark Search For Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Search For Retry": {
+      "main": [
+        [
+          {
+            "node": "Log Search Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Search Failure": {
+      "main": [
+        [
+          {
+            "node": "Release Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarise Run": {
+      "main": [
+        [
+          {
+            "node": "Mark Search Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Search Done": {
+      "main": [
+        [
+          {
+            "node": "Write Execution Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Execution Log": {
+      "main": [
+        [
+          {
+            "node": "Release Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Businesses": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current Business": {
+      "main": [
+        [
+          {
+            "node": "Find Existing Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Existing Lead": {
+      "main": [
+        [
+          {
+            "node": "Already In Database?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already In Database?": {
+      "main": [
+        [
+          {
+            "node": "Refresh Last Verified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Website?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Last Verified": {
+      "main": [
+        [
+          {
+            "node": "Mark Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Businesses": {
+      "main": [
+        [
+          {
+            "node": "Summarise Run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Current Business",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Website?": {
+      "main": [
+        [
+          {
+            "node": "Scrape Website",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare No-Website Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Website": {
+      "main": [
+        [
+          {
+            "node": "PageSpeed Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PageSpeed Check": {
+      "main": [
+        [
+          {
+            "node": "Audit Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Website": {
+      "main": [
+        [
+          {
+            "node": "AI Lead Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Lead Qualification": {
+      "main": [
+        [
+          {
+            "node": "Score & Finalise Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score & Finalise Lead": {
+      "main": [
+        [
+          {
+            "node": "Save Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Lead": {
+      "main": [
+        [
+          {
+            "node": "Save Website Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Website Audit": {
+      "main": [
+        [
+          {
+            "node": "High Or Medium Priority?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High Or Medium Priority?": {
+      "main": [
+        [
+          {
+            "node": "Add To Sales Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add To Sales Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Mark New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark New Lead": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare No-Website Profile": {
+      "main": [
+        [
+          {
+            "node": "AI Lead Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Past Searches": {
+      "main": [
+        [
+          {
+            "node": "Generate Fresh Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Fresh Search": {
+      "main": [
+        [
+          {
+            "node": "Queue Fresh Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Fresh Search": {
+      "main": [
+        [
+          {
+            "node": "Release Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 7 PM Summary": {
+      "main": [
+        [
+          {
+            "node": "Read All Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read All Leads": {
+      "main": [
+        [
+          {
+            "node": "Read Last 30 Days Of Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Last 30 Days Of Logs": {
+      "main": [
+        [
+          {
+            "node": "Read Queue Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Queue Status": {
+      "main": [
+        [
+          {
+            "node": "Build Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Email Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "72122818-9418-4436-a57f-7d2aaced0f76",
+  "meta": {
+    "instanceId": "4af5624f176a1bcdadaf7ada1047045f2f9c9d4518daa2b96e364afbbf606d45"
+  },
+  "nodeGroups": [
+    {
+      "id": "da9533d5-0f79-4532-a809-b43af1e98bd9",
+      "name": "Claim next search",
+      "nodeIds": [
+        "c8985536-3705-4038-a8f0-2e40a8a64c4b",
+        "d03f74f3-845c-41ee-9b32-30662a75305d",
+        "0d9dcebc-0d50-4650-bfb2-9e278512b152",
+        "65c0625f-debf-42d3-ba10-8755a0f93523",
+        "209ea24d-b71e-41e9-8913-f3b5cc7c0702",
+        "627eb486-40a5-48f2-811f-8b4fb8e871f3",
+        "b13c1ee0-389c-47a5-9b6e-31b380a472ab",
+        "f2a50b8a-4497-4c25-b48f-bbe57657f63b"
+      ],
+      "description": "Skips the run if paused, over budget or already running; otherwise locks the engine and picks the next queued search"
+    },
+    {
+      "id": "1458a765-d095-4e82-9957-ecae17563aa8",
+      "name": "Discover businesses",
+      "nodeIds": [
+        "6ec17ef4-7a81-443b-bdab-ca2c7d486a6a",
+        "dea425d0-1546-40ab-a104-dd8c24875aee",
+        "472861b5-04e1-4735-9a2c-0d82d2f2e626",
+        "73e1048a-85db-4936-84b7-1f990c755741"
+      ],
+      "description": "Searches the web for the chosen industry and area, drops directories and articles, then routes on result"
+    },
+    {
+      "id": "621e0f85-7400-43c8-afe3-2dba68e79bce",
+      "name": "Audit and score each business",
+      "nodeIds": [
+        "2c525b43-347b-44a2-b079-e09d450c2202",
+        "2a16c33a-b573-4e0a-960b-14e74642c3f0",
+        "0da1012e-7fea-451b-852e-f052dacbb480",
+        "8aa1c57b-f803-40cb-a597-5d203e266fc4",
+        "c77034e4-0c9c-43fc-a6ca-8d0286b7776f",
+        "1399a916-eb7e-4ad4-a907-835ec0690aad",
+        "95506048-644e-43bd-89d8-21afb57ad742",
+        "311d80be-62c2-4b4e-9f78-5872f2dfe038",
+        "5004653d-93c1-484e-8ac2-e4d12104fd63",
+        "bdb0e8a5-d3e8-48a2-b4c0-ea8bc4bc7ed2",
+        "caada896-0131-441a-bf3b-c83640a500a1",
+        "4d39889b-cad4-4406-9aee-eae6d7bbeb4f",
+        "6edc537b-c602-4e2d-8e26-f79cfe967d9c",
+        "5e1517bd-7842-4cd9-82fc-a32615c708bc",
+        "87589077-f028-4813-a5c1-9faac4e527a1",
+        "e050dd09-c8fd-4bf3-8a09-6894d1fb2960",
+        "260ff816-1ae6-4ffe-ba34-4d2942de6ee7",
+        "028eec50-3947-469f-a043-30e56314c207",
+        "1ad52b30-9bf2-44d3-8d5d-a5cc31efdc7b"
+      ],
+      "description": "One business at a time: skips known leads, audits the site, AI-qualifies and scores, saves lead, audit and pipeline rows"
+    },
+    {
+      "id": "bccc2911-cca9-4c73-939e-6aa7955df7c9",
+      "name": "Record finished search",
+      "nodeIds": [
+        "2f08f90c-eb1b-4ead-b457-746fb8a54cd0",
+        "3cbf60fe-5a31-47e8-a30a-c3cf09d0224c",
+        "05a1085a-5312-4762-b434-02a7bece1187"
+      ],
+      "description": "Marks the search DONE with counts and writes one execution log row with estimated API cost"
+    },
+    {
+      "id": "ed512b83-68a3-4e3c-a315-3e9abbdb4322",
+      "name": "Schedule retry",
+      "nodeIds": [
+        "d8e2ce56-6c1c-49e1-ab6f-2d14a24887b6",
+        "56acd014-20bb-41d4-b5ad-bd6967ef7ea1",
+        "34849d63-1a23-4418-ace0-e75d2b4be4c0"
+      ],
+      "description": "When the search provider fails, sets RETRY with exponential backoff (FAILED after max retries) and logs it"
+    },
+    {
+      "id": "ab1376fb-6059-44ae-ad6c-8fc74572af64",
+      "name": "Queue fresh search",
+      "nodeIds": [
+        "3369f47c-750a-45a7-b37f-8ea99b964532",
+        "87ce1200-1d59-42b8-accd-0b7741000068",
+        "fb23ce90-1370-4817-9158-8d902ec0ed46"
+      ],
+      "description": "When the queue is empty, picks an industry and area not searched before and queues it for the next run"
+    },
+    {
+      "id": "416325e2-a287-44bc-8589-16d811ef0b1b",
+      "name": "Send daily summary",
+      "nodeIds": [
+        "013d4e63-817c-4a09-8337-cc40101689ba",
+        "6dd26e47-1dee-4aa5-b9af-3529520a660c",
+        "3034cc60-36af-49ed-8b31-350bbd462e4c",
+        "43c80de2-13ae-4b11-be27-98efba9c609a",
+        "684741ec-f77e-4778-9c35-6f5e787de5ac"
+      ],
+      "description": "At 7 PM IST emails the day totals, cost estimates, dashboard counts and queue status; never per-lead emails"
+    }
+  ],
+  "id": "J5uN5FiPCHuitqIO",
+  "tags": []
+}
